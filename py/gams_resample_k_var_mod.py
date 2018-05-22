@@ -27,8 +27,8 @@ mu = 1.
 beta1 = 8
 beta2 = 24
 dt = 0.01
-n_rep = 100
-k_test = 30
+n_rep = 200
+k_test = 100
 #N = 6e6
 
 ## To accelerate the calculations, we consider the update
@@ -241,7 +241,7 @@ def sim_parsys(n_rep = n_rep,\
     p_n = np.mean([float(parsys[step][i].max_level>=b) for i in range(n_rep)])
     p_n_ind_sur =\
     np.sum([float(parsys[step][i].max_level>=b)*((\
-    ( n_rep-float(1) )/( n_rep-float(0) )\
+    ( n_rep-float(k) )/( n_rep-float(0) )\
     )**parsys[step][i].ind_sur) for i in range(n_rep)])
     # print('Q_iter',step)
     # return p_n * (1. - float(k)/n_rep)**step
@@ -249,6 +249,9 @@ def sim_parsys(n_rep = n_rep,\
     E = p_n * (1. - float(k)/n_rep)**step
     anc_list = [parsys[step][i].ancestor for i in range(n_rep)]
     anc_list = list(set(anc_list))
+    # if step == 0:
+    #   var_estim =\
+    #       np.var([float(parsys[0][i].max_level>b) for i in range(n_rep)])
     if selection_method == 'multinomial':
         var_estim = E**2 -\
                 (n_rep-float(k))**(2*step)/((n_rep*(n_rep-1.))**(step+1)) *\
@@ -266,7 +269,7 @@ def sim_parsys(n_rep = n_rep,\
                 ((p_n_ind_sur)**2 -
                         np.sum([np.sum([\
                                 float(parsys[step][j].max_level>=b)*((\
-                                ( n_rep-float(1) )/( n_rep-float(0) )\
+                                ( n_rep-float(k) )/( n_rep-float(0) )\
                                 )**parsys[step][j].ind_sur)
                             for j in range(n_rep) if
                             parsys[step][j].ancestor == i\
@@ -274,7 +277,7 @@ def sim_parsys(n_rep = n_rep,\
                                     for i in anc_list]))
 
 
-    delta = 2*1.96/np.sqrt(n_rep)*np.sqrt(var_estim)
+    # delta = 2*1.96/np.sqrt(n_rep)*np.sqrt(var_estim)
 
     # print('E estim: ',E)
     # print('var_estim: ', var_estim)
@@ -345,29 +348,35 @@ if __name__ == '__main__':
     #sim_parsys(n_rep = n_rep, k = k_test, selection_method='keep_survived')
     test = 1
     if test:
-        n_sim = 5000
-        method_test = 'keep_survived'
-        #method_test = 'multinomial'
+        n_sim = 1000
+        # method_test = 'keep_survived'
+        method_test = 'multinomial'
     
         from joblib import Parallel,delayed
         import multiprocessing
         num_cores = multiprocessing.cpu_count()
-        print("number of CPUs: ", num_cores)
         t_0 = time()
         def processInput():
             return sim_parsys(n_rep = n_rep, k = k_test,
                     selection_method=method_test)
         results =\
                 Parallel(n_jobs=num_cores)(delayed(processInput)()\
-                        for i in range(n_sim))
+                        for i in tqdm(range(n_sim)))
         E_list = [results[i][0] for i in range(n_sim)]
         V_list = [results[i][1] for i in range(n_sim)]
-        print('sampling method: ', method_test)
-        print('mean: ', np.mean(E_list))
-        print('naive var: ', np.var(E_list))
-        print('mean var estim: ', np.mean(V_list))
-        print('delta:', 2*(1.96/np.sqrt(n_rep))*np.sqrt(np.var(E_list))
-)
+        print('------------------------------------------------------------')
+        print("number of CPUs: ", num_cores)
+        print('a:',a,'\t','b:',b,'dt:',dt)
+        print('n_rep:',n_rep,'\t','k:',k_test,'\t','n_sim:',n_sim)
+        print('sampling method:', method_test)
+        print('------------------------------------------------------------')
+        print('mean:', np.mean(E_list))
+        print('naive var:', np.var(E_list))
+        print('mean var estim:', np.mean(V_list))
+        print('mean var estim (with out 0):'\
+            ,np.mean([V_list[i] for i in range(n_sim) if V_list[i]>0]))
+        #print('delta:', 2*(1.96/np.sqrt(n_rep))*np.sqrt(np.var(E_list)))
+        print('------------------------------------------------------------')
     
     # print('time spent(parallel): ', time() - t_0, ' s')
     # results = []
