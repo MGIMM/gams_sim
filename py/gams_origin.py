@@ -25,6 +25,15 @@ import json
 ## X_{i+1} = X_i + NUM1 + NUM2 * G_i
 ############################################################
 
+# reset RandomState: It is not pertinant to use system
+# time as 
+
+def reset_random_state():
+    f = open("/dev/random","rb")
+    rnd_str = f.read(4)
+    rnd_int = int.from_bytes(rnd_str, byteorder = 'big')
+    np.random.seed(rnd_int)
+
 class particle:
     def __init__(self,\
             ind_sur,\
@@ -196,7 +205,7 @@ def GAMS_original(n_rep,\
     dict, containing
     a,b,z_max,x_0,beta,mu,dt
     """
-    np.random.seed()
+    reset_random_state()
     ## numerical settings
     x_0 = num_settings['x_0']
     a = num_settings['a']
@@ -213,7 +222,7 @@ def GAMS_original(n_rep,\
     ## Initiation (step 0)
     parsys = [[]]
     for i in range(n_rep):
-        par = particle([0],x_0,i,i,num_settings)
+        par = particle([],x_0,i,i,num_settings)
         #par.update_cond(Z_q = x_0)
         par.update_free()
 
@@ -240,11 +249,7 @@ def GAMS_original(n_rep,\
             else:
                 I_on += [i]
         if len(I_off) == n_rep:
-            # ech = [float(parsys[step][i].max_level>=b) for i in range(n_rep)]
-            # E = np.mean(ech)
-            # V = E**2 - 1./(n_rep*(n_rep-1))*((E*n_rep)**2-\
-            #     np.sum([ech[i]**2 for i in range(n_rep)]))
-            # return [E,V]
+            # stop when distinction happens
             break
 
         K += [float(len(I_off))]
@@ -259,7 +264,7 @@ def GAMS_original(n_rep,\
                 parent_id = np.random.choice(I_on,size = 1)[0]
                 parent = parsys[step][parent_id]
                 
-                par = particle([0],\
+                par = particle([],\
                         parent.trans_traj,\
                         parent.parent,\
                         parent.ancestor,num_settings)
@@ -316,13 +321,38 @@ def GAMS_original(n_rep,\
         for i in range(n_rep):
             for j in range(n_rep):
                 if layer[i].ancestor != layer[j].ancestor:
+
+                    NUM5=1
+                    for m in range(step):
+                        if layer[i].ind_sur[m] + layer[j].ind_sur[m] <= 1:  
+                            NUM5 *= ((n_rep-float(K[m]))/n_rep)**2
+                        elif layer[i].ind_sur[m] + layer[j].ind_sur[m] == 2:  
+                            NUM5 *=\
+                            ((n_rep-float(K[m]))/n_rep)*((n_rep-float(K[m])-1)/(n_rep-1.))
+
                     NUM3 +=\
                     float(layer[i].max_level>b)*\
                     float(layer[j].max_level>b)*\
                     ((n_rep-1.)/n_rep)**\
-                    np.sum(np.multiply(layer[i].ind_sur,layer[j].ind_sur))
+                    np.sum(np.multiply(layer[i].ind_sur,layer[j].ind_sur))\
+                    *NUM5
 
-        V = E**2-gamma_1**2*(n_rep**(step-1)/(n_rep-1.)**(step+1))*NUM3
+        # NUM4 = 0
+        # for i in range(n_rep):
+        #     NUM4 +=\
+        #     float(layer[i].max_level>b)\
+        #     *np.prod([1.-float(K[m])/n_rep for m in range(step) \
+        #     if layer[i].ind_sur[m] >= 0 ])
+        #E=NUM4/float(n_rep)
+                    # print(step)
+                    # print(layer[i].ind_sur)
+                    # print('#')
+                    # print(layer[j].ind_sur)
+                    # print(np.sum(np.multiply(layer[i].ind_sur,layer[j].ind_sur)))
+
+        #V = E**2-gamma_1**2*(n_rep**(step-1)/(n_rep-1.)**(step+1))*NUM3
+        V =\
+        E**2-(n_rep**(step-1)/(n_rep-1.)**(step+1))*NUM3
 
     return [E,V]
 
@@ -340,7 +370,7 @@ def GAMS_rejection(n_rep,\
     the number of killed particles at each step is
     exactly k.
     """
-    np.random.seed()
+    reset_random_state() 
     ## numerical settings
     x_0 = num_settings['x_0']
     a = num_settings['a']
@@ -357,7 +387,7 @@ def GAMS_rejection(n_rep,\
     ## Initiation (step 0)
     parsys = [[]]
     for i in range(n_rep):
-        par = particle([0],x_0,i,i,num_settings)
+        par = particle([1],x_0,i,i,num_settings)
         #par.update_cond(Z_q = x_0)
         par.update_free()
 
@@ -431,10 +461,10 @@ def GAMS_rejection(n_rep,\
         # update step number and calculate next level
         step += 1
         current_level = calculate_level(parsys[step],k)
-
     # calculation of approximation    
     p_n = np.mean([float(parsys[step][i].max_level>=b) for i in range(n_rep)])
-    E = p_n * (1. - float(k)/n_rep)**step
+    gamma_1 = (1. - float(k)/n_rep)**step
+    E = p_n * gamma_1 
 
     if selection_method == 'multinomial':
         anc_list = [parsys[step][i].ancestor for i in range(n_rep)]
@@ -457,8 +487,8 @@ def GAMS_rejection(n_rep,\
                 if layer[i].ancestor != layer[j].ancestor:
                     NUM3 +=\
                     float(layer[i].max_level>b)*\
-                    float(layer[j].max_level>b)*\
-                    ((n_rep-1.)/n_rep)**\
+                    float(layer[j].max_level>b)\
+                    *((n_rep-1.)/n_rep)**\
                     np.sum(np.multiply(layer[i].ind_sur,layer[j].ind_sur))
 
         V =E**2-(n_rep-float(k))**(2*step)/((n_rep*(n_rep-1.))**(step+1))*NUM3
@@ -475,7 +505,8 @@ def parallel_simulation(framework,\
                         k_test,\
                         n_sim,\
                         log_file='results.log',\
-                        json_file='results.json'):
+                        json_file='results.json',\
+                        log_print=False):
 
     ## numerical settings
     x_0 = num_settings['x_0']
@@ -491,6 +522,8 @@ def parallel_simulation(framework,\
     ## end of numerical settings
 
     num_cores = multiprocessing.cpu_count()
+    if num_cores >300:
+        num_cores -= 10
     t_0 = time()
     results =\
     Parallel(n_jobs=num_cores)(delayed(framework)\
@@ -536,29 +569,46 @@ def parallel_simulation(framework,\
     if json_file:
         with open(json_file, 'w') as f:
             json.dump(results_dict, f)
-    return results_dict
+
+    if log_print: 
+        print('------------------------------------------------------------')
+        print('GAMS: ')
+        print("number of CPUs: "+ str(num_cores))
+        print('a: '+str(num_settings['a'])+\
+            '\t'+'b: '+str(num_settings['b'])+'\t'+'dt: '+str(num_settings['dt']))
+        print('n_rep: '+str(n_rep)+'\t'+'k: '+str(k_test)+'\t'+'n_sim: '+str(n_sim))
+        print('sampling method: '+ str(method_test))
+        print('------------------------------------------------------------')
+        print('mean: '+str(E_mean))
+        print('naive var estimator: '+str( V_naive))
+        print('mean of var estimator: '+str( V_mean))
+        print('var of variance estimator: '+str(np.var(V_list)))
+        print('delta: '+str(delta_naive))
+        print('delta (by var estimator):'+str(delta_var_est))
+        print('time spent (parallel):  '+ str(time() - t_0)+' s')
+        print('------------------------------------------------------------\n')
+    #return results_dict
 
 
 if __name__ == '__main__':
 
-    # Naive MC reference
-    #Naive_MC(n_sim*n_rep, num_settings)
 
     ## numeric settings (same as in 1-dim example in GAMS.pdf):
-    for k in [1,5,10,20,30,50,70]:
+    k_test_list = [1,5,30,50,70]
+    for k in [50]:
         num_settings = {\
         'x_0' : np.array([1.]),\
         'a' : 0.1,\
-        'b' : 1.9,\
-        'z_max' : 1.9,\
+        'b' : 4.9,\
+        'z_max' : 4.9,\
         'mu' : 1.,\
-        'beta':8,\
-        'dt' : 0.1,\
+        'beta':1.,\
+        'dt' : 0.01,\
         }
         
         n_rep = 100
-        k_test = k
-        n_sim = 1000000
+        k_test = k 
+        n_sim = 500000
         
         ## resampling strategy
         
@@ -566,19 +616,27 @@ if __name__ == '__main__':
         #method_test = 'multinomial'
         
         ## GAMS settings
+        GAMS_type = 'original' 
+        #GAMS_type = 'rejection' 
         
-        
-        info = method_test +'_n_rep_'+str(n_rep)\
-               +'_k_'+str(k_test) + 'n_sim_'+str(n_sim)\
+        info = GAMS_type +'_'+ method_test +'_n_rep_'+str(n_rep)\
+               +'_k_'+str(k_test) + '_n_sim_'+str(n_sim)\
                +'_a_'+str(num_settings['a'])+'_b_'+str(num_settings['b'])\
-               +'_beta_'+str(num_settings['beta'])
-        parallel_simulation(framework = GAMS_rejection,\
+               +'_beta_'+str(num_settings['beta'])+'_dt_'+str(num_settings['dt'])\
+               +'_mu_'+str(num_settings['mu'])
+        parallel_simulation(framework = GAMS_original,\
                                   num_settings = num_settings,\
                                   n_rep = n_rep,\
                                   k_test = k_test,\
                                   n_sim = n_sim,\
                                   log_file='log/'+info+'.log',\
-                                  json_file='json/'+info+'.json')
+                                  json_file='json/'+info+'.json',\
+                                  #log_file=False,\
+                                  #json_file=False,\
+                                  log_print=True)
     # read .json file
     # with open('json/'+info+'.json') as f:
     #       my_dict = json.load(f)
+
+    # Naive MC reference
+    # Naive_MC(10000000, num_settings)

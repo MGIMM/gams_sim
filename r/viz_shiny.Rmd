@@ -1,0 +1,154 @@
+---
+title: "Visulization of variance estimator"
+author: "Qiming"
+date: "May 29, 2018"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Dynamics
+
+The associated dynamic is the discretization of the following diffusion process:
+
+$$
+dX_t = - \mu \Delta t + \sqrt{2 \beta^{-1}} dW_t
+$$
+
+### Numerical settings
+
+$\Delta t = 0.01,\qquad \beta = 1, \qquad \mu = 1$
+
+### Rare events
+
+$a = 0.1,\qquad b = 4.9,\qquad z_{max} = b$
+
+
+```{r mul, echo=FALSE}
+
+library(ggplot2)
+library(rjson)
+titlePanel('Plot')
+inputPanel(
+  selectInput("s_start", label = "Start of n_sim:",
+              choices = c(1, 200, 1000, 10000, 20000), selected = 20),
+  
+  selectInput("s_method", label = "Resampling strategy:",
+              choices = c('keep_survived','multinomial'), selected = 'keep_survived'),
+  selectInput("k_test", label = "k",
+              choices = c(1,5,30,50,70), selected = '30'),
+  
+  sliderInput("s_size", label = "Size of sample:",
+              min = 10, max = 30000, value = 200, step = 10)
+)
+  
+
+
+renderPlot({
+  
+json_file <- paste0('../py/json/original_',
+                    as.character(input$s_method),
+                    '_n_rep_100_k_',
+                    as.character(input$k_test),
+                    '_n_sim_50000_a_0.1_b_4.9_beta_1.0_dt_0.01_mu_1.0.json')
+json_data <- fromJSON(file=json_file)
+
+
+V_list <- json_data["V_list"][[1]]
+E_list <- json_data["E_list"][[1]]
+  
+
+sample_start = as.numeric(input$s_start)
+sample_size = as.numeric(input$s_size)
+
+V_list_sample <- V_list[sample_start:(sample_start+sample_size-1)]
+E_list_sample <- E_list[sample_start:(sample_start+sample_size-1)]
+
+v_mean <- cumsum(V_list[1:(sample_start+sample_size-1)])/1:(sample_start+sample_size-1)
+v_mean <- v_mean[sample_start:(sample_start+sample_size-1)]
+
+v_std <- sapply(1:sample_size, function(k) {return(sd(V_list_sample[1:k]))})
+
+
+e <- qnorm(0.975)*v_std
+e <- e/sample_start:(sample_start+sample_size-1)
+
+v_naive <- sapply(1:(sample_start+sample_size-1), function(k) {return(var(E_list[1:k]))})
+v_naive <- v_naive[sample_start:(sample_start+sample_size-1)]
+
+df = data.frame(v_mean, v_mean-e, v_mean +e, v_naive, sample_start:(sample_start+sample_size-1))
+colnames(df) = c('v_mean','ci_lower','ci_upper', 'v_naive','n_sim')
+
+theme_set(theme_bw())
+theme_update(panel.background = element_rect(fill = 'white', colour = "white")
+       ,panel.grid.major = element_line(colour = 'grey80',linetype='dotted')
+       ,panel.grid.minor = element_line(colour = 'grey80',linetype='dotted')
+       ,legend.box.background = element_rect(colour = 'white'))
+
+
+ggplot(data= df,aes(x = n_sim))+
+  geom_line(aes(y = v_mean, colour = 'mean of variance estimator',
+                linetype = 'mean of variance estimator'),
+  )+
+  geom_line(aes(y = ci_lower, colour = 'lower bound of 95% CI',
+                linetype = 'lower bound of 95% CI'),
+  )+
+  geom_line(aes(y = ci_upper, colour = 'upper bound of 95% CI',
+                linetype = 'upper bound of 95% CI'),
+  )+
+  geom_line(aes(y = v_naive, colour = 'naive variance estimator',
+                linetype = 'naive variance estimator'),
+  )+
+  xlab('number of simulations')+
+  ylab('values')+
+  scale_colour_manual('legend',breaks = c('mean of variance estimator',
+                                          'lower bound of 95% CI',
+                                          'upper bound of 95% CI',
+                                          'naive variance estimator'),
+                        values = c('mean of variance estimator'='black',
+                                   'lower bound of 95% CI'='darkred' ,
+                                   'upper bound of 95% CI'='darkred',
+                                   'naive variance estimator'='darkgreen') )+
+  scale_linetype_manual('legend',breaks = c('mean of variance estimator',
+                                          'lower bound of 95% CI',
+                                          'upper bound of 95% CI',
+                                          'naive variance estimator'),
+                        values = c('mean of variance estimator'='solid',
+                                   'lower bound of 95% CI'='dotted' ,
+                                   'upper bound of 95% CI'='dotted',
+                                   'naive variance estimator'='longdash') )
+
+  
+  
+})
+
+```
+
+```{r log, echo = FALSE}
+titlePanel('log file')
+inputPanel(
+  selectInput("s_method_log", label = "Resampling strategy:",
+              choices = c('keep_survived','multinomial'), selected = 'keep_survived'),
+  selectInput("k_test_log", label = "k",
+              choices = c(1,5,30,50,70), selected = '30')
+)
+  
+
+
+renderPrint({
+  
+log_file <- paste0('../py/log/original_',
+                    as.character(input$s_method_log),
+                    '_n_rep_100_k_',
+                    as.character(input$k_test_log),
+                    '_n_sim_50000_a_0.1_b_4.9_beta_1.0_dt_0.01_mu_1.0.log')
+print(readLines(log_file))
+
+  
+})
+```
+
