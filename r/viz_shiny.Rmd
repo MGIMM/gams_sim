@@ -1,8 +1,13 @@
 ---
 title: "Visulization of variance estimator"
-author: "Qiming"
-date: "May 29, 2018"
-output: html_document
+author: ""
+date: ""
+output: 
+    html_document:
+      toc: true
+      toc_depth: 4
+      number_sections: false
+
 runtime: shiny
 ---
 
@@ -13,26 +18,105 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ### Dynamics
 
-The associated dynamic is the discretization of the following diffusion process:
+The associated dynamic is the same as the one dimentional example in GAMS.pdf: the Euler discretization of the following diffusion process
 
 $$
 dX_t = - \mu \Delta t + \sqrt{2 \beta^{-1}} dW_t
 $$
 
-### Numerical settings
+#### Numerical settings:
 
-$\Delta t = 0.01,\qquad \beta = 1, \qquad \mu = 1$
+$$
+\Delta t = 0.01,\qquad \beta = 1, \qquad \mu = 1, \qquad X_0 = 1
+$$
 
-### Rare events
+#### Rare event:
 
-$a = 0.1,\qquad b = 4.9,\qquad z_{max} = b$
+$$
+a = 0.1,\qquad b = 4.9,\qquad z_{max} = b
+$$
 
+### GAMS settings
+
+* resampling strategy: __multinomial__, __keep survived__ (only resample the particle under and equals the current level)
+* number of particles at each step $n_{rep} = 100$.
+* the minimum number of killed particles at each step $k = 1,5,30,50,70$.
+* test function: $\varphi(x) = \mathbf{1}_{\{T_A(x) < T_B(x)\}}$
+
+$$
+E = \mathbb{E}[\varphi(X)] = \mathbb{P}(T_A(X) < T_B(X))
+$$
+
+#### GAMS estimator
+
+$$
+\widehat{E} = \prod_{q = 0}^{Q_{iter}} \frac{n_{rep}-K^{(q)}}{n_{rep}} \cdot\frac{1}{n_{rep}} \sum_{i=1}^{n_{rep}}\varphi(X^{(i,Q_{iter})}) 
+$$
+where
+$$
+K^{(q)} = card (I_{off})
+$$
+the number of killed particles at each step and $Q_{iter}$ the stopping time of GAMS algorithm
+
+$$
+Q_{iter} :=\min\left( \inf\left\{q\in \mathbb{N}: \Xi(X^{(q)}) > z_{max}\right\},\inf\left\{q \in \mathbb{N}:K^{(q)} = n_{rep}\right\}\right)
+$$
+
+#### Implementation
+
+[Source code](https://github.com/MGIMM/gams_sim/blob/master/py/gams_origin.py)
+
+### Variance estimator
+
+The two estimators we implemented are as follows
+
+#### Multinomial resampling strategy
+
+This is exactly the same variance estimator of LEE & WHITELEY.
+
+$$
+\widehat{V} =
+\widehat{E}^2 - \frac{n_{rep}^{Q_{iter} -1}}{(n_{rep}-1)^{Q_{iter}+1}}
+\cdot \left(\prod_{q=0}^{Q_{iter}} 
+\frac{n_{rep} - K^{(q)}}{n_{rep}}\right)^2
+\cdot
+\sum_{E_{Q_{iter}^i} \neq E_{Q_{iter}^j}}\varphi(X^{(i,Q_{iter})})\varphi(X^{(j,Q_{iter})})
+$$
+
+where $E_{Q_{iter}}^i$ denotes the index of ancestor of $X^{(i,Q_{iter})}$ at step 0.
+
+#### Keep survived resampling strategy
+
+This is a modified version of the variance estimator introduced by LEE & WHITELEY. 
+
+
+$$
+\widehat{V} =
+\widehat{E}^2 - \frac{n_{rep}^{Q_{iter} -1}}{(n_{rep}-1)^{Q_{iter}+1}}
+\cdot\sum_{E_{Q_{iter}^i} \neq E_{Q_{iter}^j}}\varphi(X^{(i,Q_{iter})})\varphi(X^{(j,Q_{iter})})
+\cdot S(i,j)
+$$
+where
+
+$$
+S(i,j) = \prod_{q_1\in B_S(i,j)} \frac{n_{rep} - K^{(q_1)}}{n_{rep}}\cdot\frac{n_{rep} - K^{(q_1)}-1}{n_{rep}-1}
+\cdot\frac{n_{rep}-1}{n_{rep}}
+\cdot \prod_{q_2\in [0:Q_{iter}]\backslash B_S(i,j)} \left(\frac{n_{rep} - K^{(q_2)}}{n_{rep}}\right)^2
+$$
+and
+$$
+B_s(i,j) = \left\{ q = 0,\dots,Q_{iter} : G_{\Xi(X^{(q)})}(X^{(A_{q,Q_{iter}}^i,q)}) = G_{\Xi(X^{(q)})}(X^{(A_{q,Q_{iter}}^j,q)}) = 1 \right\}
+$$
+
+$A_{q,Q_{iter}}^i$ indicates the index of parent of $X^{(i,Q_{iter})}$ in step $q$ and 
+particularly, we have $E_{Q_{iter}}^i = A_{0,Q_{iter}}^i$.
+
+### Visualization
 
 ```{r mul, echo=FALSE}
 
 library(ggplot2)
 library(rjson)
-titlePanel('Plot')
 inputPanel(
   selectInput("s_start", label = "Start of n_sim:",
               choices = c(1, 200, 1000, 10000, 20000), selected = 20),
@@ -128,8 +212,9 @@ ggplot(data= df,aes(x = n_sim))+
 
 ```
 
+**logfile :**
+
 ```{r log, echo = FALSE}
-titlePanel('log file')
 inputPanel(
   selectInput("s_method_log", label = "Resampling strategy:",
               choices = c('keep_survived','multinomial'), selected = 'keep_survived'),
