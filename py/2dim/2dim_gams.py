@@ -40,8 +40,7 @@ from numba import jit, jitclass, float32, int32,float64
 
 def reset_random_state():
     a = 0
-    for i in range(5):
-        a += i**2
+    a = 1+2.
     f = open("/dev/random","rb")
     rnd_str = f.read(4)
     rnd_int = int.from_bytes(rnd_str, byteorder = 'big')
@@ -86,13 +85,13 @@ def xi_3(x, y):
     return x 
 
 ############################################################
-## Global variables
+## global variables
 beta=np.float64(2.67)
 inv_beta = np.float64(2./beta)
 dt=np.float64(.05)
 z_max=np.float64(1.9)
 rho = np.float64(0.05)
-xi = xi_1
+xi = xi_2
 X_0 = np.float64(-0.9)
 Y_0 = np.float64(0.)
 ############################################################
@@ -109,7 +108,7 @@ def _update_state(x,y):
 def update_traj(x,y):
     x_t = x[-1]
     y_t = y[-1]
-    while(xi_1(x_t,y_t) > rho):
+    while(xi_1(x_t,y_t) > rho and (x_t+1)**2 + y_t**2>rho**2):
         x_t,y_t = _update_state(x_t,y_t)
         x.append(x_t)
         y.append(y_t)
@@ -132,7 +131,7 @@ def find_max_level(x,y):
 #         ('parent', int32),\
 #         ('ancestor', int32),\
 #        ]
-# @jitclass(spec)
+
 class particle:
     def __init__(self,\
             inherited_traj_x,\
@@ -167,7 +166,6 @@ class particle:
         self.traj_x, self.traj_y =\
         update_traj(self.inh_traj_x,self.inh_traj_y)
 
-@jit
 def get_transmissible_traj(x,y,Z):
     """
     parameter: x: traj_x
@@ -190,6 +188,8 @@ def get_transmissible_traj(x,y,Z):
         t += 1
         x_t = x[t]
         y_t = y[t]
+    trans_traj_x.append(x_t)
+    trans_traj_y.append(y_t)
     return trans_traj_x,trans_traj_y
 
 ############################################################
@@ -222,11 +222,11 @@ def get_transmissible_traj(x,y,Z):
 ## GAMS
 
 
-n_rep = 10
-k = 5
+n_rep_test = 10 
+k_test = 5
 
 @jit
-def calculate_level(list_max_levels):
+def calculate_level(list_max_levels,k):
     """
     return the current level given a layer of particles
     and k the minimum number of particles to kill
@@ -236,8 +236,7 @@ def calculate_level(list_max_levels):
 def varphi(x,y):
     return np.float64((x-1.)**2 +y**2 < rho**2)
 
-#@jit
-def GAMS(n_rep,k,selection_method='keep_survived'):
+def GAMS(n_rep,k,selection_method):
     """
     Implementation of original GAMS algorithm (without
     resamplling to remove extinction). 
@@ -254,7 +253,7 @@ def GAMS(n_rep,k,selection_method='keep_survived'):
         parsys[0].append(par)
 
     step  = 0 
-    current_level = calculate_level(list_max_levels)
+    current_level = calculate_level(list_max_levels,k)
     print(current_level)
     # Initiation of K
     K=[]
@@ -277,7 +276,6 @@ def GAMS(n_rep,k,selection_method='keep_survived'):
             for i in range(n_rep):
                 parent_id = np.random.choice(I_on,size = 1)[0]
                 parent = parsys[step][parent_id]
-                print(parent.traj_x[1])
                 tr_x,tr_y = get_transmissible_traj(parent.traj_x,\
                             parent.traj_y,\
                             current_level)
@@ -294,13 +292,11 @@ def GAMS(n_rep,k,selection_method='keep_survived'):
                 if i in I_off:
                     parent_id = np.random.choice(I_on,1)[0]
                     parent = parsys[step][parent_id]
-                    print(parent.traj_x[0])
-                    print(type(parent.traj_x[0]))
                     tr_x,tr_y = get_transmissible_traj(parent.traj_x,\
                                 parent.traj_y,\
                                 current_level)
                     par = particle(tr_x,tr_y,\
-                          parent.survive_history.append(1),\
+                          parent.survive_history,\
                           parent.parent,\
                           parent.ancestor)
                 elif i in I_on:
@@ -310,7 +306,7 @@ def GAMS(n_rep,k,selection_method='keep_survived'):
                                 parent.traj_y,\
                                 current_level)
                     par = particle(tr_x,tr_y,\
-                          parent.survive_history.append(0),\
+                          parent.survive_history,\
                           parent.parent,\
                           parent.ancestor)
                 par.update()
@@ -319,9 +315,31 @@ def GAMS(n_rep,k,selection_method='keep_survived'):
 
         # update step number and calculate next level
         step += 1
-        # print('level: ', current_level)
-        current_level = calculate_level(list_max_levels)
-    return parsys[step][0]
-    
-print(GAMS(10,5).traj_x)
+        print('level: ', current_level)
+        current_level = calculate_level(list_max_levels,k)
+
+    ## Estimations
+
+    return parsys[step]
+from time import time    
+t0=time()
+a = GAMS(10,5,selection_method='keep_survived')
+print('time used: {} s'.format(time()-t0))
+
+X = np.arange(-2.5,2.5,0.05)
+Y = np.arange(-3,3,0.05)
+x_grid,y_grid = np.meshgrid(X,Y)
+import matplotlib.pyplot as plt
+from matplotlib import cm
+plt.figure(figsize=(15,10))
+plt.contour(x_grid,y_grid,V(x_grid,y_grid),55,cmap=cm.gist_heat)
+
+# plt.quiver(np.array(par.traj_x[:-1]),np.array(par.traj_y[:-1]),\
+#         np.array(par.traj_x[1:])-np.array(par.traj_x[:-1]),\
+#         np.array(par.traj_y[1:])-np.array(par.traj_y[:-1]),\
+#         scale_units='x', angles='xy', scale=15,\
+#         color='darkred',alpha = 0.3)
+for i in range(10):
+    plt.plot(a[i].traj_x,a[i].traj_y,'-',alpha=.3)
+plt.show()
         
