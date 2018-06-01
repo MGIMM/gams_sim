@@ -5,7 +5,7 @@ from joblib import Parallel,delayed
 import multiprocessing
 import json
 
-from numba import autojit
+from numba import jit, jitclass
 
 ############################################################
 # Two-dimensional bi-channel example
@@ -47,7 +47,7 @@ def reset_random_state():
     np.random.seed(rnd_int)
 
 # potential
-@autojit
+@jit
 def V(x,y):
     x2 = x**2
     y2 = y**2
@@ -57,7 +57,7 @@ def V(x,y):
         -5*np.exp(-(x-1.)**2-y2) - 5*np.exp(-(x+1)**2-y2)
     return V
 
-@autojit
+@jit
 def gradV(x,y):
     dV_x = 0.8*x**3\
             -6*x*np.exp(-x**2 - (y-1./3.)**2)\
@@ -72,17 +72,79 @@ def gradV(x,y):
     return dV_x,dV_y
 
 # reaction coordinates
-@autojit
+@jit
 def xi_1(x, y):
     return np.sqrt((x+1.)**2+y**2)
     
-@autojit
+@jit
 def xi_2(x, y):
     return 2. -np.sqrt((x-1.)**2 + y**2) 
 
-@autojit
+@jit
 def xi_3(x, y):
     return x 
+
+############################################################
+## Global variables
+beta=2.67
+inv_beta = 2./beta
+dt=.05
+z_max=1.9
+rho = 0.05
+xi = xi_1
+############################################################
+
+@jit
+def _update_state(x,y):
+    g1,g2 = gradV(x,y)
+    NUM1 = np.sqrt(inv_beta*dt)
+    x_new = x - g1*dt+NUM1*np.random.normal(size=1)[0]
+    y_new = y - g2*dt+NUM1*np.random.normal(size=1)[0]
+    return x_new,y_new
+
+@jit
+def update_traj(x,y):
+    x_t = x[-1]
+    y_t = y[-1]
+    while(xi_1(x_t,y_t) > rho):
+        x_t,y_t = _update_state(x_t,y_t)
+        x.append(x_t)
+        y.append(y_t)
+    return x,y
+
+
+
+class particle:
+    def __init__(self,\
+            inherited_traj_x,\
+            inherited_traj_y,\
+            survive_history,\
+            parent_index,\
+            ancestor_index):
+        """
+        :parameter inherited_traj: trajectory of parent until the
+                   first time beyond the current level.
+                   Seperate x and y to compile with numba. 
+        :parameter survive_history: 0-1 valued list, indicating
+                   survive or not at the corresponding step.
+        :parameter parent_index: int index of parent
+        :parameter ancestor_index: int index of parent at step 0
+        :method    update_traj: run Markov transition kernel to
+                   until it reaches A.
+        """
+        self.traj_x = []
+        self.traj_y = []
+        self.inh_traj_x = inherited_traj_x
+        self.inh_traj_y = inherited_traj_y
+        self.survive_history = survive_history
+        self.parent = parent_index
+        self.ancestor = ancestor_index
+
+    def update(self):
+        self.traj_x, self.traj_y =\
+        update_traj(self.inh_traj_x,self.inh_traj_y)
+
+
 
 ############################################################
 ## Visulization of V(x,y)  
@@ -91,58 +153,17 @@ def xi_3(x, y):
 # x_grid,y_grid = np.meshgrid(X,Y)
 # import matplotlib.pyplot as plt
 # from matplotlib import cm
+# plt.figure(figsize=(15,10))
 # plt.contour(x_grid,y_grid,V(x_grid,y_grid),25,cmap=cm.gist_heat)
-# plt.savefig('test.pdf')
+# par = particle([-0.5],[0.],[],2,3)
+# par.update()
+# 
+# plt.quiver(np.array(par.traj_x[:-1]),np.array(par.traj_y[:-1]),\
+#         np.array(par.traj_x[1:])-np.array(par.traj_x[:-1]),\
+#         np.array(par.traj_y[1:])-np.array(par.traj_y[:-1]),\
+#         scale_units='x', angles='xy', scale=15,\
+#         color='darkred',alpha = 0.3)
+# plt.plot(par.traj_x[:-1],par.traj_y[:-1],'-',color='darkred')
+# plt.show()
 ############################################################
-
-@autojit
-def update_state(x,y, beta=8.67, dt=.05):
-    NUM1 = dt*gradV(x,y)
-    NUM2 = np.sqrt(2./beta*dt)
-    x_new = x - NUM1+NUM2*np.random.normal(size=1)[0]
-    y_new = y - NUM1+NUM2*np.random.normal(size=1)[0]
-    return(x_new,y_new)
-   
-class particle:
-    def __init__(self,\
-            update_dynamic,\
-            reaction_coordinate,\
-            index_survive,\
-            inherited_traj,\
-            parent_index,\
-            ancestor_index):
-        """
-        :parameter update_dynamic: transition kernel of Markov Chain
-        :parameter index_survive: 0-1 valued list, indicating
-                   survive or not at each step.
-        :parameter inherited_traj: trajectory of parent until the first time beyond 
-                   the current level.
-        :parameter parent_index: int index of parent
-        :parameter ancestor_index: int index of parent at step 0
-        """
-
-        self.inh_traj = inherited_traj
-        self.parent = parent_index
-        self.ancestor = ancestor_index
-        self.traj = self.inh_traj
-        self.trans_traj = self.inh_traj
-        self.max_level = 0.
-        self.ind_sur = index_survive
-        self.xi = reaction_coordinate
-
-    def calculate_max_level(self):
-        self.max_level = np.max(self.traj)
-
-    def update_free(self):
-        """
-        return the whole trajectory stopped by tau_A
-
-        update max level
-        """
-
-        traj = self.inh_traj
-        while(traj[-1] > self.a):
-            traj = np.append(traj, self.update_state(state = traj[-1]))
-        self.traj = traj 
-        self.calculate_max_level()
 
