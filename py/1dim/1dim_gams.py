@@ -251,6 +251,10 @@ def GAMS_original(n_rep,\
         if len(I_off) == n_rep:
             # stop when distinction happens
             break
+        
+        # print(step)
+        # print(current_level)
+        # print(len(I_off))
 
         K += [float(len(I_off))]
         # calculate transimissible trajectory
@@ -352,7 +356,7 @@ def GAMS_original(n_rep,\
 
         #V = E**2-gamma_1**2*(n_rep**(step-1)/(n_rep-1.)**(step+1))*NUM3
         V =\
-        E**2-(n_rep**(step-1)/(n_rep-1.)**(step+1))*NUM3
+        E**2-((n_rep/(n_rep-1.))**(step+1))*(1./n_rep**2)*NUM3
 
     return [E,V]
 
@@ -595,7 +599,7 @@ if __name__ == '__main__':
 
     ## numeric settings (same as in 1-dim example in GAMS.pdf):
     k_test_list = [1,5,30,50,70]
-    for k in [50]:
+    for k in [5]:
         num_settings = {\
         'x_0' : np.array([1.]),\
         'a' : 0.1,\
@@ -608,7 +612,7 @@ if __name__ == '__main__':
         
         n_rep = 100
         k_test = k 
-        n_sim = 500000
+        n_sim = 1
         
         ## resampling strategy
         

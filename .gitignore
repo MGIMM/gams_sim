@@ -109,3 +109,6 @@ venv.bak/
 # output
 output
 results
+
+# r
+*.Rhistory
