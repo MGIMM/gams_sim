@@ -4,8 +4,9 @@ from tqdm import tqdm
 from joblib import Parallel,delayed
 import multiprocessing
 import json
+#from math import sqrt, exp
 
-from numba import jit, jitclass
+from numba import jit, jitclass, float32, int32,float64
 
 ############################################################
 # Two-dimensional bi-channel example
@@ -86,12 +87,14 @@ def xi_3(x, y):
 
 ############################################################
 ## Global variables
-beta=2.67
-inv_beta = 2./beta
-dt=.05
-z_max=1.9
-rho = 0.05
+beta=np.float64(2.67)
+inv_beta = np.float64(2./beta)
+dt=np.float64(.05)
+z_max=np.float64(1.9)
+rho = np.float64(0.05)
 xi = xi_1
+X_0 = np.float64(-0.9)
+Y_0 = np.float64(0.)
 ############################################################
 
 @jit
@@ -112,8 +115,24 @@ def update_traj(x,y):
         y.append(y_t)
     return x,y
 
+@jit
+def find_max_level(x,y):
+    levels = []
+    for i in range(len(x)):
+        levels.append(xi(x[i],y[i]))
+    return np.max(levels)
 
 
+# spec = [\
+#         ('traj_x', float32[:]),\
+#         ('traj_y', float32[:]),\
+#         ('inh_traj_x', float32[:]),\
+#         ('inh_traj_y', float32[:]),\
+#         ('survive_history', int32[:]),\
+#         ('parent', int32),\
+#         ('ancestor', int32),\
+#        ]
+# @jitclass(spec)
 class particle:
     def __init__(self,\
             inherited_traj_x,\
@@ -140,16 +159,43 @@ class particle:
         self.parent = parent_index
         self.ancestor = ancestor_index
 
+    @property
+    def max_level(self):
+        return(find_max_level(self.traj_x,self.traj_y))
+
     def update(self):
         self.traj_x, self.traj_y =\
         update_traj(self.inh_traj_x,self.inh_traj_y)
 
+@jit
+def get_transmissible_traj(x,y,Z):
+    """
+    parameter: x: traj_x
+    parameter: y: traj_y
+    parameter: Z: current level
 
+    return: trans_traj_x,trans_traj_y
+
+    we remark that we stop at the first time when the level
+    of the trajectory is above the current level.
+    """
+    trans_traj_x = []
+    trans_traj_y = []
+    x_t = X_0
+    y_t = Y_0
+    t=0
+    while(xi(x_t,y_t)<Z):
+        trans_traj_x.append(x_t)
+        trans_traj_y.append(y_t)
+        t += 1
+        x_t = x[t]
+        y_t = y[t]
+    return trans_traj_x,trans_traj_y
 
 ############################################################
 ## Visulization of V(x,y)  
-# X = np.arange(-1.5,1.5,0.1)
-# Y = np.arange(-2,2,0.1)
+# X = np.arange(-2.5,2.5,0.1)
+# Y = np.arange(-3,3,0.1)
 # x_grid,y_grid = np.meshgrid(X,Y)
 # import matplotlib.pyplot as plt
 # from matplotlib import cm
@@ -165,5 +211,117 @@ class particle:
 #         color='darkred',alpha = 0.3)
 # plt.plot(par.traj_x[:-1],par.traj_y[:-1],'-',color='darkred')
 # plt.show()
+# trans_x,trans_y =\
+# get_transmissible_traj(par.traj_x,par.traj_y,par.max_level-0.3)
+# plt.plot(xi(np.array(par.traj_x),np.array(par.traj_y)))
+# plt.show()
 ############################################################
 
+
+############################################################
+## GAMS
+
+
+n_rep = 10
+k = 5
+
+@jit
+def calculate_level(list_max_levels):
+    """
+    return the current level given a layer of particles
+    and k the minimum number of particles to kill
+    """
+    return np.partition(list_max_levels,k)[k]
+@jit
+def varphi(x,y):
+    return np.float64((x-1.)**2 +y**2 < rho**2)
+
+#@jit
+def GAMS(n_rep,k,selection_method='keep_survived'):
+    """
+    Implementation of original GAMS algorithm (without
+    resamplling to remove extinction). 
+    """
+    # prevent identical random seed for parallel computing
+    reset_random_state()
+
+    parsys = [[]]
+    list_max_levels=[]
+    for i in range(n_rep):
+        par = particle([X_0],[Y_0],[],i,i)
+        par.update()
+        list_max_levels.append(par.max_level)
+        parsys[0].append(par)
+
+    step  = 0 
+    current_level = calculate_level(list_max_levels)
+    print(current_level)
+    # Initiation of K
+    K=[]
+    ## Evolution 
+    while(current_level<z_max):
+        list_max_levels = []
+        I_on = []
+        I_off = []
+        for i in range(n_rep):
+            if parsys[step][i].max_level <= current_level:
+                I_off.append(i)
+            else:
+                I_on.append(i)
+        if len(I_off) == n_rep:
+            # stop when distinction happens
+            break
+        K.append(np.float64(len(I_off)))
+        parsys.append([]) # add an empty layer
+        if selection_method == 'multinomial':
+            for i in range(n_rep):
+                parent_id = np.random.choice(I_on,size = 1)[0]
+                parent = parsys[step][parent_id]
+                print(parent.traj_x[1])
+                tr_x,tr_y = get_transmissible_traj(parent.traj_x,\
+                            parent.traj_y,\
+                            current_level)
+                par = particle(tr_x,tr_y,\
+                        parent.survive_history,\
+                        parent.parent,\
+                        parent.ancestor)
+                par.update()
+                parsys[step+1].append(par)
+                list_max_levels.append(par.max_level)
+
+        elif selection_method == 'keep_survived':
+            for i in range(n_rep):
+                if i in I_off:
+                    parent_id = np.random.choice(I_on,1)[0]
+                    parent = parsys[step][parent_id]
+                    print(parent.traj_x[0])
+                    print(type(parent.traj_x[0]))
+                    tr_x,tr_y = get_transmissible_traj(parent.traj_x,\
+                                parent.traj_y,\
+                                current_level)
+                    par = particle(tr_x,tr_y,\
+                          parent.survive_history.append(1),\
+                          parent.parent,\
+                          parent.ancestor)
+                elif i in I_on:
+                    parent_id = i
+                    parent = parsys[step][parent_id]
+                    tr_x,tr_y = get_transmissible_traj(parent.traj_x,\
+                                parent.traj_y,\
+                                current_level)
+                    par = particle(tr_x,tr_y,\
+                          parent.survive_history.append(0),\
+                          parent.parent,\
+                          parent.ancestor)
+                par.update()
+                list_max_levels.append(par.max_level)
+                parsys[step+1].append(par)
+
+        # update step number and calculate next level
+        step += 1
+        # print('level: ', current_level)
+        current_level = calculate_level(list_max_levels)
+    return parsys[step][0]
+    
+print(GAMS(10,5).traj_x)
+        

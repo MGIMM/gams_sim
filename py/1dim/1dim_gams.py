@@ -230,13 +230,6 @@ def GAMS_original(n_rep,\
 
     step  = 0 
     current_level = calculate_level(parsys[step],k)
-    if(current_level <= x_0):
-        ech = [float(parsys[step][i].max_level>=b) for i in range(n_rep)]
-        E = np.mean(ech)
-        V = E**2 - 1./(n_rep*(n_rep-1))*((E*n_rep)**2-\
-            np.sum([ech[i]**2 for i in range(n_rep)]))
-
-        return [E,V]
     ## Evolution 
     K = []
     while(current_level<z_max):
