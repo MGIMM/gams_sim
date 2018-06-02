@@ -86,7 +86,7 @@ def xi_3(x, y):
 
 ############################################################
 ## global variables
-beta=np.float64(2.67)
+beta=np.float64(8.67)
 inv_beta = np.float64(2./beta)
 dt=np.float64(.05)
 z_max=np.float64(1.9)
@@ -94,6 +94,8 @@ rho = np.float64(0.05)
 xi = xi_2
 X_0 = np.float64(-0.9)
 Y_0 = np.float64(0.)
+n_rep_test = 10000 
+k_test = 5000
 ############################################################
 
 @jit
@@ -108,7 +110,7 @@ def _update_state(x,y):
 def update_traj(x,y):
     x_t = x[-1]
     y_t = y[-1]
-    while(xi_1(x_t,y_t) > rho and (x_t+1)**2 + y_t**2>rho**2):
+    while(xi_1(x_t,y_t) > rho and (x_t-1)**2 + y_t**2>rho**2):
         x_t,y_t = _update_state(x_t,y_t)
         x.append(x_t)
         y.append(y_t)
@@ -165,7 +167,6 @@ class particle:
     def update(self):
         self.traj_x, self.traj_y =\
         update_traj(self.inh_traj_x,self.inh_traj_y)
-
 def get_transmissible_traj(x,y,Z):
     """
     parameter: x: traj_x
@@ -222,8 +223,6 @@ def get_transmissible_traj(x,y,Z):
 ## GAMS
 
 
-n_rep_test = 10 
-k_test = 5
 
 @jit
 def calculate_level(list_max_levels,k):
@@ -234,7 +233,7 @@ def calculate_level(list_max_levels,k):
     return np.partition(list_max_levels,k)[k]
 @jit
 def varphi(x,y):
-    return np.float64((x-1.)**2 +y**2 < rho**2)
+    return np.float64((x-1.)**2 +y**2 <= rho**2)
 
 def GAMS(n_rep,k,selection_method):
     """
@@ -254,7 +253,6 @@ def GAMS(n_rep,k,selection_method):
 
     step  = 0 
     current_level = calculate_level(list_max_levels,k)
-    print(current_level)
     # Initiation of K
     K=[]
     ## Evolution 
@@ -319,27 +317,67 @@ def GAMS(n_rep,k,selection_method):
         current_level = calculate_level(list_max_levels,k)
 
     ## Estimations
-
+    E = np.float64(0)
+    for i in range(n_rep):
+        E +=\
+        varphi(parsys[step][i].traj_x[-1],parsys[step][i].traj_y[-1])
+    n_rep = np.float64(n_rep)
+    E /= n_rep
+    gamma_1 = np.float64(1)
+    Q = np.float64(step)
+    for i in range(step):
+        gamma_1 *= (n_rep - K[i])/n_rep
+    E *= gamma_1
+    print('E: {}'.format(E)) 
+    
     return parsys[step]
 from time import time    
 t0=time()
-a = GAMS(10,5,selection_method='keep_survived')
+a = GAMS(n_rep_test,k_test,selection_method='keep_survived')
 print('time used: {} s'.format(time()-t0))
 
-X = np.arange(-2.5,2.5,0.05)
-Y = np.arange(-3,3,0.05)
-x_grid,y_grid = np.meshgrid(X,Y)
+############################################################
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, writers
 from matplotlib import cm
-plt.figure(figsize=(15,10))
-plt.contour(x_grid,y_grid,V(x_grid,y_grid),55,cmap=cm.gist_heat)
 
-# plt.quiver(np.array(par.traj_x[:-1]),np.array(par.traj_y[:-1]),\
-#         np.array(par.traj_x[1:])-np.array(par.traj_x[:-1]),\
-#         np.array(par.traj_y[1:])-np.array(par.traj_y[:-1]),\
-#         scale_units='x', angles='xy', scale=15,\
-#         color='darkred',alpha = 0.3)
-for i in range(10):
-    plt.plot(a[i].traj_x,a[i].traj_y,'-',alpha=.3)
-plt.show()
-        
+def Viz_layer(layer):
+    X = np.arange(-2,2,0.01)
+    Y = np.arange(-2,2,0.01)
+    x_grid,y_grid = np.meshgrid(X,Y)
+    
+    fig = plt.figure(figsize = (15,9))
+    p1 = plt.axes(xlim=(-2, 2), ylim=(-2,2))
+    p1.contour(x_grid,y_grid,V(x_grid,y_grid),35,cmap=cm.gray)
+    
+    xdata = [[] for i in range(n_rep_test)]
+    ydata = [[] for i in range(n_rep_test)]
+    #xdata,ydata = [[],[] for i in range(10)]
+    lines = []
+    #plotcols = ['darkred','darkgreen']
+    for index in range(n_rep_test):
+        lobj = p1.plot([],[],'-o',markersize = 3, alpha = 0.1)[0]
+        lines.append(lobj)
+    
+    num_frames = np.max([len(layer[i].traj_x) for i in\
+        range(n_rep_test)]) - 1
+    def update(frame):
+        for i in range(n_rep_test):
+            if frame < len(layer[i].traj_x):
+                xdata[i].append(layer[i].traj_x[frame])
+                ydata[i].append(layer[i].traj_y[frame])
+            else:
+                xdata[i].append(layer[i].traj_x[-1])
+                ydata[i].append(layer[i].traj_y[-1])
+                
+        for ind,line in enumerate(lines):
+            line.set_data(xdata[ind], ydata[ind])
+        return lines
+    
+    ani = FuncAnimation(fig, update, frames=num_frames,\
+                        blit = True, interval = 0.01)
+    Writer = writers['ffmpeg']
+    writer = Writer(fps=10, metadata=dict(artist='MG'), bitrate=180)    
+    #ani.save('im_little.mp4', writer=writer)
+    plt.show()
+#Viz_layer(a)
