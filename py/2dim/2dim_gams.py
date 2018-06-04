@@ -84,18 +84,21 @@ def xi_2(x, y):
 def xi_3(x, y):
     return x 
 
+
 ############################################################
 ## global variables
-beta=np.float64(8.67)
+beta=np.float64(2.67)
 inv_beta = np.float64(2./beta)
 dt=np.float64(.05)
 z_max=np.float64(1.9)
 rho = np.float64(0.05)
-xi = xi_2
+xi = xi_1
 X_0 = np.float64(-0.9)
 Y_0 = np.float64(0.)
-n_rep_test = 10000 
-k_test = 5000
+n_rep_test = 100 
+k_test = 50
+method_test = 'keep_survived'
+n_sim = 5000
 ############################################################
 
 @jit
@@ -297,6 +300,8 @@ def GAMS(n_rep,k,selection_method):
                           parent.survive_history,\
                           parent.parent,\
                           parent.ancestor)
+                    par.survive_history.append(np.float64(0))
+
                 elif i in I_on:
                     parent_id = i
                     parent = parsys[step][parent_id]
@@ -307,77 +312,183 @@ def GAMS(n_rep,k,selection_method):
                           parent.survive_history,\
                           parent.parent,\
                           parent.ancestor)
+                    par.survive_history.append(np.float64(1))
                 par.update()
                 list_max_levels.append(par.max_level)
                 parsys[step+1].append(par)
 
         # update step number and calculate next level
         step += 1
-        print('level: ', current_level)
+        #print('level: ', current_level)
         current_level = calculate_level(list_max_levels,k)
 
     ## Estimations
-    E = np.float64(0)
+    E_SUM = np.float64(0)
     for i in range(n_rep):
-        E +=\
+        E_SUM +=\
         varphi(parsys[step][i].traj_x[-1],parsys[step][i].traj_y[-1])
+    n_rep_int = n_rep
     n_rep = np.float64(n_rep)
-    E /= n_rep
+    E = E_SUM/n_rep
     gamma_1 = np.float64(1)
-    Q = np.float64(step)
+    #Q = np.float64(step)
     for i in range(step):
         gamma_1 *= (n_rep - K[i])/n_rep
     E *= gamma_1
-    print('E: {}'.format(E)) 
-    
-    return parsys[step]
-from time import time    
-t0=time()
-a = GAMS(n_rep_test,k_test,selection_method='keep_survived')
-print('time used: {} s'.format(time()-t0))
+    if selection_method =='multinomial':
+        list_anc = [parsys[step][i].ancestor for i in\
+                range(n_rep_int)]
+        list_anc = list(set(list_anc))
+        if len(list_anc) >= 2:
+            NUM3 = E_SUM**2 -\
+                    np.sum([np.sum([varphi(parsys[step][j].traj_x[-1],parsys[step][j].traj_y[-1])\
+                    for j in range(n_rep_int)\
+                    if parsys[step][j].ancestor == i])**2\
+                    for i in list_anc])
+            V = E**2
+            V -= gamma_1**2 *((n_rep/(n_rep-np.float64(1)))**(step+1)/n_rep**2)*NUM3
+        else:
+            V = E**2
+    if selection_method == 'keep_survived':
+        layer = parsys[step]
+        NUM3 = np.float64(0) 
+        for i in range(n_rep_int):
+            for j in range(n_rep_int):
+                if layer[i].ancestor != layer[j].ancestor:
 
-############################################################
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation, writers
-from matplotlib import cm
+                    NUM5=np.float64(1)
+                    for m in range(step):
+                        if layer[i].survive_history[m] +\
+                            layer[j].survive_history[m] <=\
+                            np.float64(1):  
+                            NUM5 *= ((n_rep-K[m])/n_rep)**2
+                        elif layer[i].survive_history[m] +\
+                                layer[j].survive_history[m] ==\
+                                np.float64(2):  
+                            NUM5 *=\
+                            ((n_rep-K[m])/n_rep)*((n_rep-K[m]-np.float64(1))/n_rep)
 
-def Viz_layer(layer):
-    X = np.arange(-2,2,0.01)
-    Y = np.arange(-2,2,0.01)
-    x_grid,y_grid = np.meshgrid(X,Y)
-    
-    fig = plt.figure(figsize = (15,9))
-    p1 = plt.axes(xlim=(-2, 2), ylim=(-2,2))
-    p1.contour(x_grid,y_grid,V(x_grid,y_grid),35,cmap=cm.gray)
-    
-    xdata = [[] for i in range(n_rep_test)]
-    ydata = [[] for i in range(n_rep_test)]
-    #xdata,ydata = [[],[] for i in range(10)]
-    lines = []
-    #plotcols = ['darkred','darkgreen']
-    for index in range(n_rep_test):
-        lobj = p1.plot([],[],'-o',markersize = 3, alpha = 0.1)[0]
-        lines.append(lobj)
-    
-    num_frames = np.max([len(layer[i].traj_x) for i in\
-        range(n_rep_test)]) - 1
-    def update(frame):
-        for i in range(n_rep_test):
-            if frame < len(layer[i].traj_x):
-                xdata[i].append(layer[i].traj_x[frame])
-                ydata[i].append(layer[i].traj_y[frame])
-            else:
-                xdata[i].append(layer[i].traj_x[-1])
-                ydata[i].append(layer[i].traj_y[-1])
+                    NUM3 +=\
+                    varphi(parsys[step][i].traj_x[-1],parsys[step][i].traj_y[-1])*\
+                    varphi(parsys[step][j].traj_x[-1],parsys[step][j].traj_y[-1])*NUM5
+
+        V =\
+        E**2-((n_rep/(n_rep-np.float64(1)))**(step+1))/n_rep**2*NUM3
                 
-        for ind,line in enumerate(lines):
-            line.set_data(xdata[ind], ydata[ind])
-        return lines
+        
+    # print('E: {}'.format(E)) 
     
-    ani = FuncAnimation(fig, update, frames=num_frames,\
-                        blit = True, interval = 0.01)
-    Writer = writers['ffmpeg']
-    writer = Writer(fps=10, metadata=dict(artist='MG'), bitrate=180)    
-    #ani.save('im_little.mp4', writer=writer)
-    plt.show()
-#Viz_layer(a)
+    return E,V
+from time import time    
+# t0=time()
+# a = GAMS(n_rep_test,k_test,selection_method='keep_survived')
+# print('time used: {} s'.format(time()-t0))
+# 
+############################################################
+# import matplotlib.pyplot as plt
+# from matplotlib.animation import FuncAnimation, writers
+# from matplotlib import cm
+# def Viz_layer(layer):
+#     X = np.arange(-2,2,0.01)
+#     Y = np.arange(-2,2,0.01)
+#     x_grid,y_grid = np.meshgrid(X,Y)
+#     
+#     fig = plt.figure(figsize = (15,9))
+#     p1 = plt.axes(xlim=(-2, 2), ylim=(-2,2))
+#     p1.contour(x_grid,y_grid,V(x_grid,y_grid),35,cmap=cm.gray)
+#     
+#     xdata = [[] for i in range(n_rep_test)]
+#     ydata = [[] for i in range(n_rep_test)]
+#     #xdata,ydata = [[],[] for i in range(10)]
+#     lines = []
+#     #plotcols = ['darkred','darkgreen']
+#     for index in range(n_rep_test):
+#         lobj = p1.plot([],[],'-o',markersize = 3, alpha = 0.1)[0]
+#         lines.append(lobj)
+#     
+#     num_frames = np.max([len(layer[i].traj_x) for i in\
+#         range(n_rep_test)]) - 1
+#     def update(frame):
+#         for i in range(n_rep_test):
+#             if frame < len(layer[i].traj_x):
+#                 xdata[i].append(layer[i].traj_x[frame])
+#                 ydata[i].append(layer[i].traj_y[frame])
+#             else:
+#                 xdata[i].append(layer[i].traj_x[-1])
+#                 ydata[i].append(layer[i].traj_y[-1])
+#                 
+#         for ind,line in enumerate(lines):
+#             line.set_data(xdata[ind], ydata[ind])
+#         return lines
+#     
+#     ani = FuncAnimation(fig, update, frames=num_frames,\
+#                         blit = True, interval = 0.01)
+#     Writer = writers['ffmpeg']
+#     writer = Writer(fps=10, metadata=dict(artist='MG'), bitrate=180)    
+#     #ani.save('im_little.mp4', writer=writer)
+#     plt.show()
+# 
+# #Viz_layer(a)
+# ############################################################
+## parallelization
+
+num_cores = multiprocessing.cpu_count()
+if num_cores >300:
+    num_cores -= 10
+t_0 = time()
+results =\
+Parallel(n_jobs=num_cores)(delayed(GAMS)\
+(n_rep = n_rep_test, k = k_test,\
+selection_method=method_test)\
+                for i in tqdm(range(n_sim)))
+E_list = [results[i][0] for i in range(n_sim)]
+V_list = [results[i][1] for i in range(n_sim)]
+E_mean = np.mean(E_list)
+V_naive = np.var(E_list)
+V_mean = np.mean(V_list)
+
+print('------------------------------------------------------------')
+print('GAMS: ')
+print("number of CPUs: "+ str(num_cores))
+# print('a: '+str(num_settings['a'])+\
+#     '\t'+'b: '+str(num_settings['b'])+'\t'+'dt: '+str(num_settings['dt']))
+print('beta:', beta)
+print('n_rep: '+str(n_rep_test)+'\t'+'k: '+str(k_test)+'\t'+'n_sim: '+str(n_sim))
+print('sampling method: '+ str(method_test))
+print('------------------------------------------------------------')
+print('mean: '+str(E_mean))
+print('naive var estimator: '+str( V_naive))
+print('mean of var estimator: '+str( V_mean))
+print('var of variance estimator: '+str(np.var(V_list)))
+print('time spent (parallel):  '+ str(time() - t_0)+' s')
+print('------------------------------------------------------------\n')
+results_dict={\
+    'E_list':E_list,\
+    'V_list':V_list,\
+    }
+# if log_file: 
+#     file = open(log_file,'w')
+#     file.write('------------------------------------------------------------\n')
+#     file.write('GAMS: \n')
+#     file.write("number of CPUs: "+ str(num_cores)+'\n')
+#     file.write('a: '+str(num_settings['a'])+\
+#         '\t'+'b: '+str(num_settings['b'])+'\t'+'dt: '+str(num_settings['dt'])+'\n')
+#     file.write('n_rep: '+str(n_rep)+'\t'+'k: '+str(k_test)+'\t'+'n_sim: '+str(n_sim)+'\n')
+#     file.write('sampling method: '+ str(method_test)+'\n')
+#     file.write('------------------------------------------------------------'+'\n')
+#     file.write('mean: '+str(E_mean)+'\n')
+#     file.write('naive var estimator: '+str( V_naive)+'\n')
+#     file.write('mean of var estimator: '+str( V_mean)+'\n')
+#     file.write('var of variance estimator: '+str(np.var(V_list))+'\n')
+#     file.write('delta: '+str(delta_naive)+'\n')
+#     file.write('delta (by var estimator):'+str(delta_var_est)+'\n')
+#     file.write('time spent (parallel):  '+ str(time() - t_0)+' s'+'\n')
+#     file.write('------------------------------------------------------------\n')
+#     file.close()
+
+
+
+
+# json_file = 'mul_500000.json'
+# with open(json_file, 'w') as f:
+#     json.dump(results_dict, f)
