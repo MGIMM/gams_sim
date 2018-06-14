@@ -87,18 +87,27 @@ def xi_3(x, y):
 
 ############################################################
 ## global variables
-beta=np.float64(2.67)
+beta=np.float64(4.67)
 inv_beta = np.float64(2./beta)
 dt=np.float64(.05)
+
+## rare events settings
 z_max=np.float64(1.9)
 rho = np.float64(0.05)
-xi = xi_1
 X_0 = np.float64(-0.9)
+#z_max=np.float64(0.7)
+#rho = np.float64(0.1)
+#X_0 = np.float64(-0.7)
+
 Y_0 = np.float64(0.)
-n_rep_test = 100 
-k_test = 50
+## reaction coordinate settings
+xi = xi_1
+
+n_rep_test = 100
+k_test = 1
 method_test = 'keep_survived'
-n_sim = 5000
+method_test = 'multinomial'
+n_sim = 1000
 ############################################################
 
 @jit
@@ -186,7 +195,7 @@ def get_transmissible_traj(x,y,Z):
     x_t = X_0
     y_t = Y_0
     t=0
-    while(xi(x_t,y_t)<Z):
+    while(xi(x_t,y_t)<=Z):
         trans_traj_x.append(x_t)
         trans_traj_y.append(y_t)
         t += 1
@@ -233,7 +242,7 @@ def calculate_level(list_max_levels,k):
     return the current level given a layer of particles
     and k the minimum number of particles to kill
     """
-    return np.partition(list_max_levels,k)[k]
+    return np.partition(list_max_levels,k)[k-1]
 @jit
 def varphi(x,y):
     return np.float64((x-1.)**2 +y**2 <= rho**2)
@@ -256,10 +265,15 @@ def GAMS(n_rep,k,selection_method):
 
     step  = 0 
     current_level = calculate_level(list_max_levels,k)
+    #print('level: ', current_level)
     # Initiation of K
     K=[]
     ## Evolution 
+    __=0
     while(current_level<z_max):
+        __+=1
+        if __>50000:
+            break
         list_max_levels = []
         I_on = []
         I_off = []
@@ -272,6 +286,7 @@ def GAMS(n_rep,k,selection_method):
             # stop when distinction happens
             break
         K.append(np.float64(len(I_off)))
+        #print(K[step])
         parsys.append([]) # add an empty layer
         if selection_method == 'multinomial':
             for i in range(n_rep):
@@ -323,10 +338,10 @@ def GAMS(n_rep,k,selection_method):
         current_level = calculate_level(list_max_levels,k)
 
     ## Estimations
-    E_SUM = np.float64(0)
+    list_Qiter = []
     for i in range(n_rep):
-        E_SUM +=\
-        varphi(parsys[step][i].traj_x[-1],parsys[step][i].traj_y[-1])
+        list_Qiter.append(varphi(parsys[step][i].traj_x[-1],parsys[step][i].traj_y[-1]))
+    E_SUM = np.sum(list_Qiter)
     n_rep_int = n_rep
     n_rep = np.float64(n_rep)
     E = E_SUM/n_rep
@@ -335,10 +350,16 @@ def GAMS(n_rep,k,selection_method):
     for i in range(step):
         gamma_1 *= (n_rep - K[i])/n_rep
     E *= gamma_1
+    if step == 0:
+        #selection_method ='multinomial'
+        V = E**2 - np.float64(1)/(n_rep*(n_rep-np.float64(1)))*((E_SUM)**2-\
+            np.sum([list_Qiter[i]**2 for i in range(n_rep_int)]))
+        return E,V
     if selection_method =='multinomial':
         list_anc = [parsys[step][i].ancestor for i in\
                 range(n_rep_int)]
         list_anc = list(set(list_anc))
+        NUM3 =np.float64(0)
         if len(list_anc) >= 2:
             NUM3 = E_SUM**2 -\
                     np.sum([np.sum([varphi(parsys[step][j].traj_x[-1],parsys[step][j].traj_y[-1])\
@@ -350,33 +371,40 @@ def GAMS(n_rep,k,selection_method):
         else:
             V = E**2
     if selection_method == 'keep_survived':
-        layer = parsys[step]
         NUM3 = np.float64(0) 
-        for i in range(n_rep_int):
-            for j in range(n_rep_int):
-                if layer[i].ancestor != layer[j].ancestor:
+        list_anc = [parsys[step][i].ancestor for i in\
+                range(n_rep_int)]
+        list_anc = list(set(list_anc))
+        if len(list_anc) >= 2:
+            layer = parsys[step]
+            for i in range(n_rep_int):
+                for j in range(n_rep_int):
+                    if layer[i].ancestor != layer[j].ancestor:
 
-                    NUM5=np.float64(1)
-                    for m in range(step):
-                        if layer[i].survive_history[m] +\
-                            layer[j].survive_history[m] <=\
-                            np.float64(1):  
-                            NUM5 *= ((n_rep-K[m])/n_rep)**2
-                        elif layer[i].survive_history[m] +\
-                                layer[j].survive_history[m] ==\
-                                np.float64(2):  
-                            NUM5 *=\
-                            ((n_rep-K[m])/n_rep)*((n_rep-K[m]-np.float64(1))/n_rep)
+                        NUM5=np.float64(1)
+                        for m in range(step):
+                            if np.float64(layer[i].survive_history[m] +\
+                                layer[j].survive_history[m]) <=\
+                                np.float64(1):  
+                                NUM5 *= ((n_rep-K[m])/n_rep)**2
+                            elif np.float64(layer[i].survive_history[m] +\
+                                    layer[j].survive_history[m]) ==\
+                                    np.float64(2):  
+                                NUM5 *=\
+                                ((n_rep-K[m])/n_rep)*((n_rep-K[m]-np.float64(1))/n_rep)
 
-                    NUM3 +=\
-                    varphi(parsys[step][i].traj_x[-1],parsys[step][i].traj_y[-1])*\
-                    varphi(parsys[step][j].traj_x[-1],parsys[step][j].traj_y[-1])*NUM5
+                        NUM3 +=\
+                        varphi(parsys[step][i].traj_x[-1],parsys[step][i].traj_y[-1])*\
+                        varphi(parsys[step][j].traj_x[-1],parsys[step][j].traj_y[-1])*NUM5
 
+        else:
+            V=E**2
         V =\
-        E**2-((n_rep/(n_rep-np.float64(1)))**(step+1))/n_rep**2*NUM3
+        E**2-NUM3*((n_rep/(n_rep-np.float64(1)))**(step+1))/n_rep/n_rep
                 
         
     # print('E: {}'.format(E)) 
+    #print('number of eves:',len(list_anc))
     
     return E,V
 from time import time    
@@ -446,12 +474,14 @@ V_list = [results[i][1] for i in range(n_sim)]
 E_mean = np.mean(E_list)
 V_naive = np.var(E_list)
 V_mean = np.mean(V_list)
+results_dict={\
+    'E_list':E_list,\
+    'V_list':V_list,\
+    }
 
 print('------------------------------------------------------------')
 print('GAMS: ')
 print("number of CPUs: "+ str(num_cores))
-# print('a: '+str(num_settings['a'])+\
-#     '\t'+'b: '+str(num_settings['b'])+'\t'+'dt: '+str(num_settings['dt']))
 print('beta:', beta)
 print('n_rep: '+str(n_rep_test)+'\t'+'k: '+str(k_test)+'\t'+'n_sim: '+str(n_sim))
 print('sampling method: '+ str(method_test))
@@ -462,33 +492,29 @@ print('mean of var estimator: '+str( V_mean))
 print('var of variance estimator: '+str(np.var(V_list)))
 print('time spent (parallel):  '+ str(time() - t_0)+' s')
 print('------------------------------------------------------------\n')
-results_dict={\
-    'E_list':E_list,\
-    'V_list':V_list,\
-    }
-# if log_file: 
-#     file = open(log_file,'w')
-#     file.write('------------------------------------------------------------\n')
-#     file.write('GAMS: \n')
-#     file.write("number of CPUs: "+ str(num_cores)+'\n')
-#     file.write('a: '+str(num_settings['a'])+\
-#         '\t'+'b: '+str(num_settings['b'])+'\t'+'dt: '+str(num_settings['dt'])+'\n')
-#     file.write('n_rep: '+str(n_rep)+'\t'+'k: '+str(k_test)+'\t'+'n_sim: '+str(n_sim)+'\n')
-#     file.write('sampling method: '+ str(method_test)+'\n')
-#     file.write('------------------------------------------------------------'+'\n')
-#     file.write('mean: '+str(E_mean)+'\n')
-#     file.write('naive var estimator: '+str( V_naive)+'\n')
-#     file.write('mean of var estimator: '+str( V_mean)+'\n')
-#     file.write('var of variance estimator: '+str(np.var(V_list))+'\n')
-#     file.write('delta: '+str(delta_naive)+'\n')
-#     file.write('delta (by var estimator):'+str(delta_var_est)+'\n')
-#     file.write('time spent (parallel):  '+ str(time() - t_0)+' s'+'\n')
-#     file.write('------------------------------------------------------------\n')
-#     file.close()
 
 
+info = method_test+'_n_rep_'+\
+        str(n_rep_test)+'_k_'+str(k_test)+'_n_sim_'\
+        +str(n_sim)+'_beta_'+str(beta)+'_dt_'+str(dt)
+json_file = 'json_2/'+info+'.json'
+log_file = 'log_2/'+info+'.log'
 
+with open(json_file, 'w') as f:
+    json.dump(results_dict, f)
 
-# json_file = 'mul_500000.json'
-# with open(json_file, 'w') as f:
-#     json.dump(results_dict, f)
+file = open(log_file,'w')
+file.write('------------------------------------------------------------\n')
+file.write('GAMS: \n')
+file.write("number of CPUs: "+ str(num_cores)+'\n')
+file.write('beta:'+ str(beta)+'\n')
+file.write('n_rep: '+str(n_rep_test)+'   '+'k: '+str(k_test)+'   '+'n_sim: '+str(n_sim)+'\n')
+file.write('sampling method: '+ str(method_test)+'\n')
+file.write('------------------------------------------------------------'+'\n')
+file.write('mean: '+str(E_mean)+'\n')
+file.write('naive var estimator: '+str( V_naive)+'\n')
+file.write('mean of var estimator: '+str( V_mean)+'\n')
+file.write('var of variance estimator: '+str(np.var(V_list))+'\n')
+file.write('time spent (parallel):  '+ str(time() - t_0)+' s'+'\n')
+file.write('------------------------------------------------------------\n')
+file.close()
