@@ -101,13 +101,13 @@ X_0 = np.float64(-0.9)
 
 Y_0 = np.float64(0.)
 ## reaction coordinate settings
-xi = xi_1
 
+xi = xi_1
 n_rep_test = 100
-k_test = 1
+k_test = 5 
 method_test = 'keep_survived'
-method_test = 'multinomial'
-n_sim = 1000
+#method_test = 'multinomial'
+n_sim = 10000
 ############################################################
 
 @jit
@@ -406,7 +406,7 @@ def GAMS(n_rep,k,selection_method):
     # print('E: {}'.format(E)) 
     #print('number of eves:',len(list_anc))
     
-    return E,V
+    return E,V,len(list_anc)
 from time import time    
 # t0=time()
 # a = GAMS(n_rep_test,k_test,selection_method='keep_survived')
@@ -469,36 +469,71 @@ Parallel(n_jobs=num_cores)(delayed(GAMS)\
 (n_rep = n_rep_test, k = k_test,\
 selection_method=method_test)\
                 for i in tqdm(range(n_sim)))
+
+
+
 E_list = [results[i][0] for i in range(n_sim)]
 V_list = [results[i][1] for i in range(n_sim)]
+nb_eve_list = [results[i][2] for i in range(n_sim)]
+
+@jit
+def final_calculs():
+    V_naive_list = []
+    V_mean_list = []
+    E_mean = []
+    for i in range(n_sim):
+        V_naive_list.append(np.var(E_list[0:i]))
+        V_mean_list.append(np.mean(V_list[0:i]))
+        E_mean.append(np.mean(E_list[0:i]))
+    results_dict={\
+        'E':E_mean,\
+        'nb_eve':nb_eve_list,\
+        'V_naive':V_naive_list,\
+        'V_mean':V_mean_list
+        }
+    return results_dict
+    
+# V_naive_list = [np.var(E_list[0:i]) for i in range(n_sim)]
+# V_mean_list = [np.mean(V_list[0:i]) for i in range(n_sim)]
+# NUM_delta = 1.96/np.sqrt(n_sim)
+# # delta_naive_list = [np.sqrt(V_naive_list[i])*NUM_delta for i in range(n_sim)]
+# # delta_mean_list = [np.sqrt(V_mean_list[i])*NUM_delta for i in range(n_sim)]
+#  
 E_mean = np.mean(E_list)
 V_naive = np.var(E_list)
 V_mean = np.mean(V_list)
-results_dict={\
-    'E_list':E_list,\
-    'V_list':V_list,\
-    }
-
+# results_dict={\
+#     'E':E_list,\
+#     'V':V_list,\
+#     'nb_eve':nb_eve_list,\
+#     'V_naive':V_naive_list,\
+#     'V_mean':V_mean_list,\
+#     'delta_naive':delta_naive_list,\
+#     'delta_mean':delta_mean_list
+#     }
+results_dict = final_calculs()
 print('------------------------------------------------------------')
 print('GAMS: ')
 print("number of CPUs: "+ str(num_cores))
-print('beta:', beta)
+print('beta: ', beta)
 print('n_rep: '+str(n_rep_test)+'\t'+'k: '+str(k_test)+'\t'+'n_sim: '+str(n_sim))
 print('sampling method: '+ str(method_test))
+print('reaction coordinate: '+ xi.__name__)
 print('------------------------------------------------------------')
 print('mean: '+str(E_mean))
 print('naive var estimator: '+str( V_naive))
 print('mean of var estimator: '+str( V_mean))
 print('var of variance estimator: '+str(np.var(V_list)))
+print('nb of eve (mean): '+str(np.mean(nb_eve_list)))
 print('time spent (parallel):  '+ str(time() - t_0)+' s')
 print('------------------------------------------------------------\n')
 
 
 info = method_test+'_n_rep_'+\
         str(n_rep_test)+'_k_'+str(k_test)+'_n_sim_'\
-        +str(n_sim)+'_beta_'+str(beta)+'_dt_'+str(dt)
-json_file = 'json_2/'+info+'.json'
-log_file = 'log_2/'+info+'.log'
+        +str(n_sim)+'_beta_'+str(beta)+'_dt_'+str(dt)+'_'+xi.__name__
+json_file = 'json_low_tem/'+info+'.json'
+log_file = 'log_low_tem/'+info+'.log'
 
 with open(json_file, 'w') as f:
     json.dump(results_dict, f)
@@ -507,14 +542,16 @@ file = open(log_file,'w')
 file.write('------------------------------------------------------------\n')
 file.write('GAMS: \n')
 file.write("number of CPUs: "+ str(num_cores)+'\n')
-file.write('beta:'+ str(beta)+'\n')
+file.write('beta: '+ str(beta)+'\n')
 file.write('n_rep: '+str(n_rep_test)+'   '+'k: '+str(k_test)+'   '+'n_sim: '+str(n_sim)+'\n')
 file.write('sampling method: '+ str(method_test)+'\n')
+file.write('reaction coordinate: '+ xi.__name__ +'\n')
 file.write('------------------------------------------------------------'+'\n')
 file.write('mean: '+str(E_mean)+'\n')
 file.write('naive var estimator: '+str( V_naive)+'\n')
 file.write('mean of var estimator: '+str( V_mean)+'\n')
 file.write('var of variance estimator: '+str(np.var(V_list))+'\n')
+file.write('nb of eve (mean): '+str(np.mean(nb_eve_list))+'\n')
 file.write('time spent (parallel):  '+ str(time() - t_0)+' s'+'\n')
 file.write('------------------------------------------------------------\n')
 file.close()

@@ -1,0 +1,15 @@
+------------------------------------------------------------
+GAMS: 
+number of CPUs: 310
+beta:12.67
+n_rep: 100   k: 90   n_sim: 300
+sampling method: multinomial
+reaction coordinate: xi_2
+------------------------------------------------------------
+mean: 4.730838686005931e-19
+naive var estimator: 3.4060895193793293e-35
+mean of var estimator: 3.4284703540523406e-35
+var of variance estimator: 2.70437864869055e-67
+nb of eve (mean): 1.9833333333333334
+time spent (parallel):  5.448168516159058 s
+------------------------------------------------------------
